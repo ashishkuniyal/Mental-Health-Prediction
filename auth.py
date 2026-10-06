@@ -2,7 +2,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
-from sqlalchemy.orm import Session
+from pymongo.database import Database
 import bcrypt
 import jwt
 
@@ -31,7 +31,7 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
 
-def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
+def get_current_user(token: str = Depends(oauth2_scheme), db: Database = Depends(get_db)):
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
@@ -45,12 +45,13 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
     except jwt.PyJWTError:
         raise credentials_exception
     
-    user = db.query(models.User).filter(models.User.email == email).first()
-    if user is None:
+    user_data = db.users.find_one({"email": email})
+    if user_data is None:
         raise credentials_exception
-    return user
+    user_data["_id"] = str(user_data["_id"])
+    return models.User(**user_data)
 
-def get_current_user_optional(token: str = None, db: Session = Depends(get_db)):
+def get_current_user_optional(token: str = None, db: Database = Depends(get_db)):
     """Like get_current_user but returns None if no valid token instead of raising 401."""
     if not token:
         return None
@@ -61,7 +62,10 @@ def get_current_user_optional(token: str = None, db: Session = Depends(get_db)):
         email: str = payload.get("sub")
         if email is None:
             return None
-        user = db.query(models.User).filter(models.User.email == email).first()
-        return user
+        user_data = db.users.find_one({"email": email})
+        if user_data:
+            user_data["_id"] = str(user_data["_id"])
+            return models.User(**user_data)
+        return None
     except jwt.PyJWTError:
         return None

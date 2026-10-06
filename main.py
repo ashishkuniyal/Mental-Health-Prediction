@@ -2,19 +2,17 @@ import joblib
 import pandas as pd
 from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
-from sqlalchemy.orm import Session
+from pymongo.database import Database
+from bson import ObjectId
 from pydantic import BaseModel, Field, EmailStr
 from typing import Literal, List, Optional
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 import models
-from database import engine, get_db
+from database import get_db
 import auth
 import datetime
-
-# Create DB Tables
-models.Base.metadata.create_all(bind=engine)
 
 model = joblib.load('Mental_Health_Model.pkl')
 top_countries = ['Other','India','USA','Canada','Australia','UK','Germany','Mexico','Turkey','France']
@@ -77,25 +75,29 @@ class HistoryResponse(BaseModel):
         from_attributes = True
 
 @app.post('/auth/register', tags=['Auth'])
-def register(user: UserCreate, db: Session = Depends(get_db)):
-    db_user = db.query(models.User).filter(models.User.email == user.email).first()
+def register(user: UserCreate, db: Database = Depends(get_db)):
+    db_user = db.users.find_one({"email": user.email})
     if db_user:
         raise HTTPException(status_code=400, detail="Email already registered")
     
     hashed_pw = auth.get_password_hash(user.password)
-    new_user = models.User(email=user.email, hashed_password=hashed_pw)
-    db.add(new_user)
-    db.commit()
-    db.refresh(new_user)
+    new_user_data = {
+        "email": user.email, 
+        "hashed_password": hashed_pw, 
+        "streak_count": 0, 
+        "last_checkin_date": None, 
+        "created_at": datetime.datetime.utcnow()
+    }
+    db.users.insert_one(new_user_data)
     return {"message": "User registered successfully"}
 
 @app.post('/auth/login', response_model=Token, tags=['Auth'])
-def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
-    user = db.query(models.User).filter(models.User.email == form_data.username).first()
-    if not user or not auth.verify_password(form_data.password, user.hashed_password):
+def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Database = Depends(get_db)):
+    user = db.users.find_one({"email": form_data.username})
+    if not user or not auth.verify_password(form_data.password, user["hashed_password"]):
         raise HTTPException(status_code=401, detail="Incorrect email or password")
     
-    token = auth.create_access_token(data={"sub": user.email})
+    token = auth.create_access_token(data={"sub": user["email"]})
     return {"access_token": token, "token_type": "bearer"}
 
 
@@ -109,7 +111,7 @@ from fastapi.security import OAuth2PasswordBearer
 oauth2_scheme_optional = OAuth2PasswordBearer(tokenUrl="auth/login", auto_error=False)
 
 @app.post('/predict', response_model=PredictionResponse, tags=['Prediction'])
-def predict(data: StudentData, db: Session = Depends(get_db), token: str = Depends(oauth2_scheme_optional)):
+def predict(data: StudentData, db: Database = Depends(get_db), token: str = Depends(oauth2_scheme_optional)):
    
    user = auth.get_current_user_optional(token, db)
    
@@ -148,23 +150,24 @@ def predict(data: StudentData, db: Session = Depends(get_db), token: str = Depen
    streak = 0
    # Save to DB if logged in
    if user:
-       record = models.PredictionRecord(
-           user_id=user.id,
-           score=score,
-           **data.model_dump()
-       )
-       db.add(record)
+       record_data = data.model_dump()
+       record_data["user_id"] = user.id
+       record_data["score"] = score
+       record_data["created_at"] = datetime.datetime.utcnow()
+       db.predictions.insert_one(record_data)
        
        # Streak Gamification Logic
        today = datetime.date.today()
+       today_dt = datetime.datetime.combine(today, datetime.datetime.min.time())
+       
        if user.last_checkin_date != today:
            if user.last_checkin_date == today - datetime.timedelta(days=1):
                user.streak_count += 1
            else:
                user.streak_count = 1
            user.last_checkin_date = today
+           db.users.update_one({"_id": ObjectId(user.id)}, {"$set": {"streak_count": user.streak_count, "last_checkin_date": today_dt}})
        
-       db.commit()
        streak = user.streak_count
 
    return PredictionResponse(predicted_mental_health_score=score, streak_count=streak)
@@ -178,16 +181,16 @@ def get_profile(current_user: models.User = Depends(auth.get_current_user)):
     }
 
 @app.get('/history', tags=['Analytics'])
-def get_history(db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
-    records = db.query(models.PredictionRecord).filter(models.PredictionRecord.user_id == current_user.id).order_by(models.PredictionRecord.created_at.desc()).limit(10).all()
-    return [{"id": r.id, "score": r.score, "created_at": r.created_at.isoformat()} for r in records]
+def get_history(db: Database = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
+    records = db.predictions.find({"user_id": current_user.id}).sort("created_at", -1).limit(10)
+    return [{"id": str(r["_id"]), "score": r["score"], "created_at": r["created_at"].isoformat()} for r in records]
 
 @app.get('/analytics', tags=['Analytics'])
-def get_analytics(db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
-    records = db.query(models.PredictionRecord).filter(models.PredictionRecord.user_id == current_user.id).order_by(models.PredictionRecord.created_at.asc()).all()
+def get_analytics(db: Database = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
+    records = list(db.predictions.find({"user_id": current_user.id}).sort("created_at", 1))
     return {
-        "labels": [r.created_at.strftime("%b %d") for r in records],
-        "scores": [r.score for r in records]
+        "labels": [r["created_at"].strftime("%b %d") for r in records],
+        "scores": [r["score"] for r in records]
     }
 
 app.mount("/", StaticFiles(directory=".", html=True), name="static")

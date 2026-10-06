@@ -1,21 +1,19 @@
-from sqlalchemy import create_engine
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
+import os
+from pymongo import MongoClient
+from dotenv import load_dotenv
 
-SQLALCHEMY_DATABASE_URL = "sqlite:///./mindmetric.db"
+# Load local .env file if it exists
+load_dotenv()
 
-# connect_args={"check_same_thread": False} is needed only for SQLite
-engine = create_engine(
-    SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False}
-)
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+# Define the MongoDB URL using environment variables for security
+MONGO_DATABASE_URL = os.getenv("MONGO_DATABASE_URL")
 
-Base = declarative_base()
+if not MONGO_DATABASE_URL:
+    raise ValueError("MONGO_DATABASE_URL environment variable is not set!")
+
+client = MongoClient(MONGO_DATABASE_URL)
+db_client = client["mindmetric_db"]
 
 # Dependency for FastAPI
 def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+    return db_client

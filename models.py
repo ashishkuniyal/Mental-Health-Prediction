@@ -1,46 +1,31 @@
-from sqlalchemy import Column, Integer, String, Float, ForeignKey, DateTime, Date
-from sqlalchemy.orm import relationship
-from database import Base
-import datetime
+from pydantic import BaseModel, Field
+from typing import Optional, List
+from datetime import datetime, date
 
-class User(Base):
-    __tablename__ = "users"
+class User(BaseModel):
+    id: str = Field(alias="_id")
+    email: str
+    hashed_password: str
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    streak_count: int = 0
+    last_checkin_date: Optional[date] = None
 
-    id = Column(Integer, primary_key=True, index=True)
-    email = Column(String, unique=True, index=True)
-    hashed_password = Column(String)
-    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+class PredictionRecord(BaseModel):
+    id: Optional[str] = Field(default=None, alias="_id")
+    user_id: str
     
-    # Gamification
-    streak_count = Column(Integer, default=0)
-    last_checkin_date = Column(Date, nullable=True)
-
-    predictions = relationship("PredictionRecord", back_populates="user")
-
-
-class PredictionRecord(Base):
-    __tablename__ = "predictions"
-
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"))
+    age: int
+    gender: str
+    country: str
+    academic_level: str
+    most_used_platform: str
+    purpose_of_use: str
+    avg_daily_usage_hours: float
+    daily_unlocks: int
+    study_hours: float
+    physical_activity_hours: float
+    sleep_hours_per_night: float
+    stress_level: str
     
-    # Inputs
-    age = Column(Integer)
-    gender = Column(String)
-    country = Column(String)
-    academic_level = Column(String)
-    most_used_platform = Column(String)
-    purpose_of_use = Column(String)
-    avg_daily_usage_hours = Column(Float)
-    daily_unlocks = Column(Integer)
-    study_hours = Column(Float)
-    physical_activity_hours = Column(Float)
-    sleep_hours_per_night = Column(Float)
-    stress_level = Column(String)
-    
-    # Output
-    score = Column(Float)
-    
-    created_at = Column(DateTime, default=datetime.datetime.utcnow)
-
-    user = relationship("User", back_populates="predictions")
+    score: float
+    created_at: datetime = Field(default_factory=datetime.utcnow)

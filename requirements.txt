@@ -4,3 +4,9 @@ pydantic
 joblib
 pandas
 scikit-learn
+pymongo
+dnspython
+bcrypt
+PyJWT
+python-multipart
+python-dotenv
